@@ -2,6 +2,7 @@
 This Repository will provide all the information regarding the Hyperledger Fabric 2.x . Starting from the installation of  the fabric, and Deploying a Business Network in the Fabric Ledger
 
 # First go through the Installation.md file
+* Make sure you are using the `ubuntu 20.04 LTS` version.
 * Carry out all the necessary commands to setup the Fabric Enviroment.
 * If you find any error in setting up the enviroment then try running that command again in the terminal and check whether is showing any error or not.
 * In this complete installation process warnings are completely fine, no need to worry about those. 
