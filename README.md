@@ -8,3 +8,7 @@ This Repository will provide all the information regarding the Hyperledger Fabri
 
 # Sometimes you might run into really problematic issues with the setup. Visit the how_to_clean_everything.md file
 * Carry out all the operations in this file and again start the installation from the scratch.
+
+# Error: "Channel creation failed"
+If you are getting this error after running the command ` ./network.sh up createChannel -c channel1 -ca `.
+Then follow up the `Error.md` file.
