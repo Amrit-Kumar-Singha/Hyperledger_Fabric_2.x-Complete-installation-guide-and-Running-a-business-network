@@ -96,7 +96,7 @@ Now, we must make sure that fabric commands are in the PATH. The following comma
 
 ```
 peer   # ensure it's there. If not, set the path 
-export PATH=$PATH:/home/nam/fabric/fabric-samples/bin/ 
+export PATH=$PATH:/home/amrit/fabric/fabric-samples/bin/ 
 peer   # should work now 
 ```
 
