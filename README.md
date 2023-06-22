@@ -12,3 +12,6 @@ This Repository will provide all the information regarding the Hyperledger Fabri
 # Error: "Channel creation failed"
 If you are getting this error after running the command ` ./network.sh up createChannel -c channel1 -ca `.
 Then follow up the `Error.md` file.
+
+# Fabric-2.x-Resources 
+After creating the `asset-app` directory make sure you transfer, `caActions.js` , `helper.js` and `ledgerActions.js` all these three javascript files to the `asset-app` directory. Else the ledgerAction commands won't be working.
