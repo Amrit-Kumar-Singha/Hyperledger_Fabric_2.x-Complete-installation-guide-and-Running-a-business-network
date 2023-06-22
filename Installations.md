@@ -282,3 +282,259 @@ source ./scripts/envVar.sh
 # Select which organization you're emulating 
 setGlobals  1   
 ```
+# Accessing the Chaincode through Code 
+
+Of course, we don't want to use the CLI to do everything. We need to be able to do this through Node code. 
+
+We will create a simple project for this based on the example provided in `fabric-samples/asset-transfer-basic/application-javascript`. However, we want to clean the code a bit so that it's easier to work with. 
+
+Let's start by creating a node project in our `fabric` folder. 
+
+```bash 
+cd ~/fabric 
+mdkir asset-app 
+cd asset-app 
+
+# initialize a node project 
+npm init 
+``` 
+
+Install the required packages in this project. 
+
+```bash 
+npm install fabric-ca-client 
+npm install fabric-network 
+``` 
+
+## Helper Functions 
+
+We need to first create some helper function. First is a function to get the organization's configurations. Complete sources of these files are available in the resources. In this file, we wil only discuss 
+
+```javascript 
+exports.buildCCPOrg1 = function() { 
+    const ccpPath = path.resolve(__dirname, '..', 'test-network', 
+    'organizations', 'peerOrganizations', 'org1.example.com', 
+    'connection-org1.json'); 
+
+    const fileExists = fs.existsSync(ccpPath); 
+    if(!fileExists) { 
+        throw new Error("Cannot find: ${ccpPath}"); 
+    }
+
+    const contents = fs.readFileSync(ccpPath, 'utf8'); 
+
+    const ccp = JSON.parse(contents); 
+
+    console.log("Loaded network config from: ${ccpPath}"); 
+
+    return ccp; 
+}
+``` 
+
+We then create a function for creating a wallet. This wallet will hold the keys and other crypto material used througout the code. The waller can store in-memory (for testing) or in a folder (which is what we will use). 
+
+```javascript 
+exports.buildWallet = async function (Wallets, walletPath) { 
+    let wallet; 
+
+    if (walletPath) { 
+        wallet = await Wallets.newFileSystemWallet(walletPath);     
+        console.log("Built wallet from ${walletPath}"); 
+    } else { 
+        wallet = await Wallets.newInMemoryWallet(); 
+        console.log("Build in-memory wallet"); 
+    }
+
+    return wallet; 
+}
+``` 
+
+There's also a function to pretty-print javascript. This is straight-forward. 
+
+```javascript 
+exports.prettyJSONString = function(inputString) { 
+    return JSON.stringify(JSON.parse(inputString), null, 2);
+}
+```
+
+
+## Performing Administrative Actions 
+
+There are some functions that will set up the admins and users. Logic for this is in the `caActions.js`Let's take a look at those here. 
+
+First function is to load the credentials used for performing actions. 
+
+```javascript 
+function buildCAClient(FabricCAServices, ccp, caHostName) { 
+    const caInfo = ccp.certificateAuthorities(caHostName); 
+    const caTLSCACerts = caInfo.tlsCACerts.pem; 
+    const caClient = new FabricCAServices(caInfo.url, {
+        trustedRoots: caTLSCACerts, verify: false 
+    }, caInfo.caName); 
+
+    console.log("Built a CA client named: ${caInfo.caName}"); 
+    return caClient; 
+};
+``` 
+
+This function will be called with the following information: 
+
+```javascript 
+let ccp = helper.buildCCPOrg1(); 
+
+const caClient = buildCAClient(
+                    FabricCAServices, 
+                    ccp, 
+                    'ca.org1.example.com'
+                ); 
+```
+
+We also need to create an administrative account. This will be a onetime task. We first create the enrollment information along with its X.509 certificate. Then we put it in the wallet. 
+
+```javascript 
+async function enrollAdmin(caClient, wallet, orgMspId) { 
+    // ... 
+        
+        const enrollment = await caClient.enroll({ 
+            enrollmentID: adminUserId, 
+            enrollmentSecret: adminUserPasswd
+        }); 
+
+        const x509Identity = { 
+            credentials: {
+                certificate: enrollment.certificate, 
+                privateKey: enrollment.key.toBytes()
+            }, 
+            mspId: orgMspId, 
+            type: 'X.509'
+        }; 
+
+        await wallet.put(adminUserId, x509Identity);
+    // ... 
+};
+```
+
+Creating an everyday user is similar but it's done more often. We load the admin credentials, use those to create the user and save the user's credentials in the wallet. 
+
+```javascript 
+async function registerAndEnrollUser(caClient, wallet, orgMspId, userId, affiliation){ 
+    // ... 
+
+    // Must use an admin to register a new user
+    const adminIdentity = await wallet.get(adminUserId);
+
+    // ... 
+
+    // build a user object for authenticating with the CA
+    const provider = wallet.getProviderRegistry().
+                        getProvider(adminIdentity.type);
+    const adminUser = await provider.getUserContext(adminIdentity, adminUserId);
+
+
+    const secret = await caClient.register({
+                          affiliation: affiliation,
+                          enrollmentID: userId,
+                          role: 'client'
+    }, adminUser);
+
+    const enrollment = await caClient.enroll({
+      enrollmentID: userId,
+      enrollmentSecret: secret
+    });
+
+    const x509Identity = {
+      credentials: {
+        certificate: enrollment.certificate,
+        privateKey: enrollment.key.toBytes(),
+      },
+      mspId: orgMspId,
+      type: 'X.509',
+    };
+
+    await wallet.put(userId, x509Identity);
+
+    // ...
+};
+```
+
+There are two more function `getAdmin` and `getUser` which are basically interfaces for the above two functions. 
+
+Finally, we have some helper code so that we can call these functions from the command line. 
+
+```javascript 
+let args = process.argv; 
+
+if (args[2] === 'admin') { 
+    getAdmin(); 
+} else if (args[2] === 'user') { 
+    let org1UserId = args[3]; 
+    getUser(org1UserId); 
+} else { 
+    console.log("Invalid command");
+}
+```
+
+
+## Performing Actions on the Ledger Itself 
+
+Once we have the users and admins, we can perform the actual chaincode logic. Logic for this is in the `ledgerActions.js`. 
+
+Relevant fragments of code are discussed here. First part is the connection information. Think of this as being similar to creating a database connection. 
+
+```javascript 
+const ccp = helper.buildCCPOrg1();
+const wallet = await helper.buildWallet(Wallets, walletPath);
+const gateway = new Gateway();
+
+await gateway.connect(ccp, {
+            wallet,
+            identity: org1UserId,
+            discovery: { enabled: true, asLocalhost: true }
+        });
+
+```
+
+Then we establish the connection to the actual chaincode. Again, think of this as selecting a specific database from our connection. 
+
+```javascript 
+const network = await gateway.getNetwork(channelName);  // channel1 
+const contract = network.getContract(chaincodeName);    // basic
+```
+
+
+Using the actual chaincode functions is no extremely easy. Simply call the relevant function like so: 
+
+```javascript 
+await contract.submitTransaction('InitLedger'); 
+``` 
+
+This function essentially calls the function in the chaincode. This can be seen as the `InitLedger` function in `fabric-samples/asset-transfer-basic/chaincode-javascript/lib/assetTransfer.js`. 
+
+The only difference is that since we are using `subimtTransaction`, this will go to the orderer and the whole voting and consensus algorithm will work and the transaction will be added to the blockchain. From a programming perspective, all of this is hidden behind this one simple function call. 
+
+(Note that this line has actually been commented out in the file since we have already initialized the ledger previously in our workflow here.)
+
+Very similarly, we have the `GetAllAssets` and `ReadAsset` functions. 
+
+```javascript 
+let result = await contract.evaluateTransaction('GetAllAssets'); 
+// ... 
+let result = await contract.evaluateTransaction('ReadAsset', asset); 
+// ...
+let result = await contract.submitTransaction('CreateAsset', 
+                                'asset101', 
+                                'violet', 
+                                '5', 
+                                'Snnorre 3', 
+                                '1300'); 
+```
+
+The file also has some code fragments that allow passing comments into the code. So, we can call it using the following commands. 
+
+```bash 
+node ledgerActions.js GetAllAssets 
+node ledgerActions.js ReadAsset asset1 
+node ledgerActions.js CreateAsset 
+```
+
+Of course, you can add node code for exposing these calls through a REST API and call those REST APIs from your front-end such as React, Vue etc. 
